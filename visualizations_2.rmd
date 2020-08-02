@@ -1,0 +1,302 @@
+---
+title: "vizualizations_2"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(scales)
+library(gridExtra)
+library(knitr)
+library(ggExtra)
+library(gganimate)
+library('vroom') # input/output
+library('skimr') # overview
+library('tibble') # data wrangling
+
+# set up plotting theme
+theme_jason <- function(legend_pos="top", base_size=12, font=NA){
+  
+  # come up with some default text details
+  txt <- element_text(size = base_size+3, colour = "black", face = "plain")
+  bold_txt <- element_text(size = base_size+3, colour = "black", face = "bold")
+  
+  # use the theme_minimal() theme as a baseline
+  theme_minimal(base_size = base_size, base_family = font)+
+    theme(text = txt,
+          # axis title and text
+          axis.title.x = element_text(size = 15, hjust = 1),
+          axis.title.y = element_text(size = 15),
+          # gridlines on plot
+          panel.grid.major = element_line(linetype = 2),
+          panel.grid.minor = element_line(linetype = 2),
+          # title and subtitle text
+          plot.title = element_text(size = 18, colour = "grey25", face = "bold"),
+          plot.subtitle = element_text(size = 16, colour = "grey44"),
+
+          ###### clean up!
+          legend.key = element_blank(),
+          # the strip.* arguments are for faceted plots
+          strip.background = element_blank(),
+          strip.text = element_text(face = "bold", size = 13, colour = "grey35")) +
+
+    #----- AXIS -----#
+    theme(
+      #### remove Tick marks
+      axis.ticks=element_blank(),
+
+      ### legend depends on argument in function and no title
+      legend.position = legend_pos,
+      legend.title = element_blank(),
+      legend.background = element_rect(fill = NULL, size = 0.5,linetype = 2)
+
+    )
+}
+
+
+plot_cols <- c("#498972", "#3E8193", "#BC6E2E", "#A09D3C", "#E06E77", "#7589BC", "#A57BAF", "#4D4D4D")
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+```{r}
+reg_season_stats <- read.csv("google-cloud-ncaa-march-madness-2020-division-1-mens-tournament/MDataFiles_Stage1/MRegularSeasonDetailedResults.csv", stringsAsFactors = FALSE)
+tourney_stats <- read.csv("google-cloud-ncaa-march-madness-2020-division-1-mens-tournament/MDataFiles_Stage1/MNCAATourneyDetailedResults.csv", stringsAsFactors = FALSE)
+teams <- read.csv("google-cloud-ncaa-march-madness-2020-division-1-mens-tournament/MDataFiles_Stage1/MTeams.csv", stringsAsFactors = FALSE)
+tourney_stats_compact <- read.csv("google-cloud-ncaa-march-madness-2020-division-1-mens-tournament/MDataFiles_Stage1/MNCAATourneyCompactResults.csv",stringsAsFactors = FALSE)
+tourney_seeds <- read.csv("google-cloud-ncaa-march-madness-2020-division-1-mens-tournament/MDataFiles_Stage1/MNCAATourneySeeds.csv", stringsAsFactors = FALSE)
+team_conferences <- read.csv("google-cloud-ncaa-march-madness-2020-division-1-mens-tournament/MDataFiles_Stage1/MTeamConferences.csv", stringsAsFactors = FALSE)
+conferences <- read.csv("google-cloud-ncaa-march-madness-2020-division-1-mens-tournament/MDataFiles_Stage1/Conferences.csv", stringsAsFactors = FALSE)
+players <- read.csv("google-cloud-ncaa-march-madness-2020-division-1-mens-tournament/MPlayers.csv", stringsAsFactors = FALSE, na.strings=c("","NA")) %>% filter(!is.na(LastName))
+```
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+#~~~~~~~~~~~~~~~~~~~~~~~
+# Read in data
+#~~~~~~~~~~~~~~~~~~~~~~~
+play_by_play <- data.frame()
+
+# loop through each seasons PlayByPlay folders and read in in the play by play files
+for(each in list.files("google-cloud-ncaa-march-madness-2020-division-1-mens-tournament/")[str_detect(list.files("google-cloud-ncaa-march-madness-2020-division-1-mens-tournament/"), "MEvents")]) {
+  df <- read_csv(paste0("google-cloud-ncaa-march-madness-2020-division-1-mens-tournament/", each))
+  
+  
+  # Grouped shooting variables ----------------------------------------------
+  # there are some shooting variables that can probably be condensed - tip ins and dunks
+  paint_attempts_made <- c("made2_dunk", "made2_lay", "made2_tip") 
+  paint_attempts_missed <- c("miss2_dunk", "miss2_lay", "miss2_tip") 
+  paint_attempts <- c(paint_attempts_made, paint_attempts_missed)
+  # create variables for field goals made, and also field goals attempted (which includes the sum of FGs made and FGs missed)
+  FGM <- c("made2_dunk", "made2_jump", "made2_lay",  "made2_tip",  "made3_jump")
+  FGA <- c(FGM, "miss2_dunk", "miss2_jump" ,"miss2_lay",  "miss2_tip",  "miss3_jump")
+  # variable for three-pointers
+  ThreePointer <- c("made3_jump", "miss3_jump")
+  #  Two point jumper
+  TwoPointJump <- c("miss2_jump", "made2_jump")
+  # Free Throws
+  FT <- c("miss1_free", "made1_free")
+  # all shots
+  AllShots <- c(FGA, FT)
+  
+  
+  # Feature Engineering -----------------------------------------------------
+  # paste the two even variables together for FGs as this is the format for last years comp data
+  df <- df %>%
+    mutate_if(is.factor, as.character) %>% 
+    mutate(EventType = ifelse(str_detect(EventType, "miss") | str_detect(EventType, "made") | str_detect(EventType, "reb"), paste0(EventType, "_", EventSubType), EventType))
+  
+  # change the unknown for 3s to "jump" and for FTs "free"
+  df <- df %>% 
+    mutate(EventType = ifelse(str_detect(EventType, "3"), str_replace(EventType, "_unk", "_jump"), EventType),
+           EventType = ifelse(str_detect(EventType, "1"), str_replace(EventType, "_unk", "_free"), EventType))
+  
+  
+  df <- df %>% 
+    # create a variable in the df for whether the attempts was made or missed
+    mutate(shot_outcome = ifelse(grepl("made", EventType), "Made", ifelse(grepl("miss", EventType), "Missed", NA))) %>%
+    # identify if the action was a field goal, then group it into the attempt types set earlier
+    mutate(FGVariable = ifelse(EventType %in% FGA, "Yes", "No"),
+           AttemptType = ifelse(EventType %in% paint_attempts, "PaintPoints", 
+                                ifelse(EventType %in% ThreePointer, "ThreePointJumper", 
+                                       ifelse(EventType %in% TwoPointJump, "TwoPointJumper", 
+                                              ifelse(EventType %in% FT, "FreeThrow", "NoAttempt")))))
+  
+  
+  # Rework DF so only shots are included and whatever lead to the shot --------
+  df <- df %>% 
+    mutate(GameID = paste(Season, DayNum, WTeamID, LTeamID, sep = "_")) %>% 
+    group_by(GameID, ElapsedSeconds) %>% 
+    mutate(EventType2 = lead(EventType),
+           EventPlayerID2 = lead(EventPlayerID)) %>% ungroup()
+  
+  
+  df <- df %>% 
+    mutate(FGVariableAny = ifelse(EventType %in% FGA | EventType2 %in% FGA, "Yes", "No")) %>% 
+    filter(FGVariableAny == "Yes") 
+  
+  
+  # create a variable for if the shot was made, but then the second event was also a made shot
+  df <- df %>% 
+    mutate(Alert = ifelse(EventType %in% FGM & EventType2 %in% FGM, "Alert", "OK")) %>% 
+    # only keep "OK" observations
+    filter(Alert == "OK") 
+  # replace NAs with somerhing
+  df$EventType2[is.na(df$EventType2)] <- "no_second_event"
+  
+  
+  # create a variable for if there was an assist on the FGM:
+  df <- df %>% 
+    mutate(AssistedFGM = ifelse(EventType %in% FGM & EventType2 == "assist", "Assisted", 
+                                ifelse(EventType %in% FGM & EventType2 != "assist", "Solo", 
+                                       ifelse(EventType %in% FGM & EventType2 == "no_second_event", "Solo", "None"))))
+  
+  # # because the FGA culd be either in `EventType` (more likely) or `EventType2` (less likely), need
+  # # one variable to indicate the shot type
+  # df <- df %>% \
+  #   mutate(fg_type = ifelse(EventType %in% FGA, EventType, ifelse(EventType2 %in% FGA, EventType2, "Unknown")))
+  
+  # create final output
+  df <- df %>% ungroup()
+  play_by_play <- bind_rows(play_by_play, df)
+  
+  rm(df);gc()
+}
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+p_tab <- play_by_play %>% 
+  filter(AttemptType != "FreeThrow") %>% 
+  group_by(AttemptType, Season) %>% 
+  summarise(n_shots = n()) %>% 
+  filter(AttemptType != "NoAttempt") %>%
+  filter(Season == 2019) %>% ungroup()
+
+play_by_play %>% 
+  filter(AttemptType != "FreeThrow") %>% 
+  group_by(AttemptType, Season) %>% 
+  summarise(n_shots = n()) %>% 
+  filter(AttemptType != "NoAttempt") -> df
+
+df %>% ggplot(aes(x= Season, y= n_shots, colour = AttemptType, group = AttemptType)) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  geom_text(aes(label = paste0(AttemptType)), 
+            hjust = -0.3, size = 5)+
+  #scale_color_manual(values = plot_cols) +
+  scale_x_continuous(labels = c(2015:2020), breaks = c(2015:2020), limits = c(2015, 2022)) +
+  scale_y_continuous(labels = c("125,000", "150,000", "175,000", "200,000", "225,000", "250,000 attempts"), breaks = c(seq(from=125000, to= 250000, by= 25000)), limits = c(125000, 250000)) +
+  ggtitle("The Steph Curry Era", subtitle = "Three Pointers quickly rose to be the most important shot in the NCAA.") +
+  theme_jason(legend_pos = "none") +
+  theme(panel.grid.major.x = element_blank(), panel.grid.minor.x = element_blank(), axis.title.x = element_blank(), axis.title.y = element_blank()) -> p
+
+```
+
+
+
+
+```{r,Fig2, echo=TRUE, fig.height=10, fig.width=15}
+anim <- p + transition_reveal(Season,keep_last = 200)
+animate(anim, nframes=125,fps=25, height = 400, width =610)
+anim_save('three_pointers.gif')
+```
+
+
+
+
+```{r}
+path <- "google-cloud-ncaa-march-madness-2020-division-1-mens-tournament/"
+subpath <- "MDataFiles_Stage1/"
+
+regular_detail <- vroom(str_c(path, subpath, "MRegularSeasonDetailedResults.csv"), col_types = cols())
+```
+
+```{r}
+tourney_stats %>% 
+  skim()
+```
+
+
+
+
+```{r}
+foo <- regular_detail %>% 
+  select(Season, starts_with("WFG")) %>% 
+  mutate(WFGM = WFGM - WFGM3,
+         WFGA = WFGA - WFGA3) %>% 
+  mutate(WFGR = WFGM/WFGA,
+         WFGR3 = WFGM3/WFGA3) %>% 
+  select(-matches("GM")) %>% 
+  pivot_longer(starts_with("WFG"), names_to = "type", values_to = "points") %>% 
+  mutate(shot = if_else(str_detect(type, "3"), "3-pointers", "2-pointers"),
+         rate = if_else(str_detect(type, "R"), "success rate", "shot attempts")) 
+
+bar <- regular_detail %>% 
+  select(Season, starts_with("LFG")) %>% 
+  mutate(LFGM = LFGM - LFGM3,
+         LFGA = LFGA - LFGA3) %>% 
+  mutate(LFGR = LFGM/LFGA,
+         LFGR3 = LFGM3/LFGA3) %>% 
+  select(-matches("GM")) %>% 
+  pivot_longer(starts_with("LFG"), names_to = "type", values_to = "points") %>% 
+  mutate(shot = if_else(str_detect(type, "3"), "3-pointers", "2-pointers"),
+         rate = if_else(str_detect(type, "R"), "success rate", "shot attempts"))
+
+foobar <- foo %>% 
+  bind_rows(bar) %>% 
+  mutate(team = fct_rev(as.factor(if_else(str_detect(type, "W"), "winner", "loser"))))
+```
+
+
+
+```{r fig.cap ="Fig. 24", fig.height = 5.5}
+par(xpd=TRUE)
+foobar %>% 
+  filter(rate == "success rate") %>% 
+  group_by(Season, shot, team) %>% 
+  summarise(mean_rate = mean(points),
+            sd_rate = sd(points)) %>% 
+  ungroup() %>% 
+  mutate(Season = if_else(team == "winner", Season + 0.2, Season)) %>% 
+  ggplot(aes(Season, mean_rate, col = team)) +
+  geom_point() +
+  scale_y_continuous(labels = scales::percent) +
+  scale_x_continuous(expand = c(.1, .1)) +
+  geom_errorbar(aes(ymin = mean_rate - sd_rate, ymax = mean_rate + sd_rate)) +
+  facet_wrap(~ shot, nrow = 2, scales = "free") +
+  theme_jason() +
+  theme(legend.background = element_rect(
+                                  size=0, linetype="solid", 
+                                  colour ="darkblue")) +
+  labs(x = "", y = "", title = "Shot percentages over time",
+       subtitle = "Mean percentages with standard deviation error bars")
+```
+
+
+
+```{r}
+TClass <- factor(c(1, 1, 0, 0))
+PClass <- factor(c(0, 1, 0, 1))
+Y      <- c(26, 224, 242, 24)
+df <- data.frame(TClass, PClass, Y)
+
+library(ggplot2)
+ggplot(data =  df, mapping = aes(x = TClass, y = PClass)) +
+  geom_tile(aes(fill = Y), colour = "white") +
+  geom_text(aes(label = sprintf("%1.0f", Y)), vjust = 'inward') +
+  #scale_fill_gradient(low = "#E06E77", high = "#4D4D4D") +
+  theme_jason() + theme(legend.position = "none")
+```
+
+
+
+
+
+
